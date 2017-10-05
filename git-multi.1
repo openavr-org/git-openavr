@@ -1,0 +1,87 @@
+.TH "GIT\-MULTI" "1" "2016/11/03" "0\&.0\&.0" "Git Manual"
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust test to left margin only)
+.ad
+.SH "NAME"
+git-multi \- Apply git commands to multiple Git repositories at once
+.SH "SYNOPSIS"
+.sp
+.nf
+\fIgit multi\fR [\-h] [\-\-branch] [\-\-branch\-verbose] [\-B <BRANCH_NAME>] [\-c]
+                 [\-\-debug] [\-e <REPO>] [\-r <REPO>] [\-q]
+.sp
+.SH "DESCRIPTION"
+The 'git\-multi' script enhances git with a new command: 'multi'. All arguments
+not known to 'git\-multi' are passed through to the git command run for each repo
+found in the directory.
+.sp
+This lets you run a single git command on multiple git repos with a single
+command line.
+.sp
+.SH "OPTIONS"
+.PP
+\-h, \-\-help
+.RS 4
+Show this help message and exit
+.RE
+.PP
+\-\-branch
+.RS 4
+Output only the current branch for all repositories.
+.RE
+.PP
+\-\-branch\-verbose
+.RS 4
+Verbose branch information (same as \-\-branch, but more verbose)
+.RE
+.PP
+\-B BRANCH_NAME, \-\-branch\-name BRANCH_NAME
+.RS 4
+Show repositories not on specified branch
+.RE
+.PP
+\-c, \-\-changed
+.RS 4
+Execute only if repository not changed.
+.RE
+.PP
+\-\-debug
+.RS 4
+Output git\-multi debug information.
+.RE
+.PP
+-e REPO, \-\-exclude REPO
+.RS 4
+Add repo to list of repositories to exclude.
+.RE
+.PP
+\-r REPO, \-\-repo REPO
+.RS 4
+Add arg to list of repositories to work on. Can be given multiple times. Each
+REPO value can be a ':' separated list of repositories.
+.RE
+.PP
+\-q, \-\-quiet
+.RS 4
+If repository unchanged, do not output anything.
+.RE
+.sp
+.SH "EXAMPLES"
+Some 'git\-multi' arguments can mask git command arguments. To work around this,
+add a '\-\-' argument after the last 'git\-multi' argument and all arguments after
+the '\-\-' will be ignored by 'git\-multi' and passed directly to git. For example,
+to run 'git branch \-q' on all repos without triggering 'git multi \-q':
+
+    $ git multi \-\- branch -q
+
+To pass '\-q' to both 'git\-multi' and 'git\-branch':
+
+    $ git multi \-q \-\- branch \-q
+
+The \-r options will override excluded repositories (either in
+\.gitmulti_ignore or given with \-e) allowing git-multi to operate on
+them.
+.sp
+.SH "COPYRIGHT NOTICE"
+Copyright \(co 2016 Theodore A. Roth

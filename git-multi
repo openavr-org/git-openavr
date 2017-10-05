@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+#
+# Copyright 2016 Theodore A. Roth <troth@openavr.org>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+import os
+import sys
+import argparse
+import subprocess
+import logging
+import xml.etree.ElementTree as ET
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+Description = """
+The 'git-multi' script enhances git with a new command: 'multi'. All arguments
+not known to 'git-multi' are passed through to the git command run for each repo
+found in the directory.
+
+This lets you run a single git command on multiple git repos with a single
+command line.
+"""
+
+Epilog = """
+Some 'git-multi' arguments can mask git command arguments. To work around this,
+add a '--' argument after the last 'git-multi' argument and all arguments after
+the '--' will be ignored by 'git-multi' and passed directly to git. For example,
+to run 'git branch -q' on all repos without triggering 'git multi -q':
+
+    $ git multi -- branch -q
+
+To pass '-q' to both 'git-multi' and 'git-branch':
+
+    $ git multi -q -- branch -q
+
+The -r options will override excluded repositories (either in
+.gitmulti_ignore or given with -e) allowing git-multi to operate on
+them.
+"""
+
+class GitMulti:
+    def __init__(self, argv, logger):
+        self.log = logger
+        self.parse_cmd_line(argv)
+
+        topdir, repos = self.find_repositories()
+
+        for repo in repos:
+            if not self.opts.repos or repo in self.opts.repos:
+                os.chdir(topdir)
+                rc = self.exec_repository(repo)
+                if rc != 0:
+                    break
+
+    def parse_cmd_line(self, argv):
+        '''Process the command line arguments.
+
+        Allows user to get help with:
+
+            git multi -h
+
+        Allow user to provide args which bypass git-multi, but only consume the
+        first instance of '--' so that user can still pass that on to git.
+        '''
+        if '--' in argv:
+            idx = argv.index('--')
+            multi_args = argv[:idx]
+            git_args = argv[idx+1:]
+        else:
+            multi_args = argv
+            git_args = []
+
+        parser = argparse.ArgumentParser(
+            description=Description,
+            epilog=Epilog,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+
+        parser.add_argument('--branch',
+                            action='store_true',
+                            help='Output only the current branch for all repositories.')
+        parser.add_argument('--branch-verbose',
+                            action='store_true',
+                            help='Verbose branch information (same as --branch, but more verbose)')
+        parser.add_argument('-B', '--branch-name',
+                            action='store',
+                            help='Show repositories not on specified branch')
+        parser.add_argument('-c', '--changed',
+                            action='store_true',
+                            help='Execute only if repository not changed.')
+        parser.add_argument('--debug',
+                            action='store_true',
+                            help='Output git-multi debug information.')
+        parser.add_argument('-e', '--exclude',
+                            action='append',
+                            dest='excludes',
+                            metavar='REPO',
+                            default=[],
+                            help='Add repo to list of repositories to exclude.')
+        parser.add_argument('-r', '--repo',
+                            action='append',
+                            dest='repos',
+                            metavar='REPO',
+                            default=[],
+                            help=("Add arg to list of repositories to work on. "
+                                  "Can be given multiple times. Each REPO value can be "
+                                  "a ':' separated list of repositories."))
+        parser.add_argument('-q', '--quiet',
+                            action='store_true',
+                            help='If repository unchanged, do not output anything.')
+
+        opts,args = parser.parse_known_args(multi_args)
+
+        # Preserve order of arguments going to git by putting args before git_args
+        git_args = args + git_args
+
+        # Process repositories specified via '-r foo:bar'
+        repos = []
+        for repo in opts.repos:
+            repos.extend(repo.split(':'))
+        opts.repos = repos
+
+        # Process excludes
+        excludes = []
+        for repo in opts.excludes:
+            excludes.extend([p for p in repo.split(':') if p not in opts.repos])
+        opts.excludes = excludes
+
+        if opts.debug:
+            self.log.setLevel(logging.DEBUG)
+        else:
+            self.log.setLevel(logging.INFO)
+
+        self.log.debug('OPTS: {}'.format(opts))
+        self.log.debug('GARGS: {}'.format(git_args))
+
+        self.opts = opts
+        self.git_args = git_args
+
+    def exec(self, cmd):
+        '''Execute an arbitrary command as a subprocess.
+        '''
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT,
+                             bufsize=-1)
+        out,err = p.communicate()
+        return p.returncode, out.decode().strip()
+
+    def is_changed(self):
+        '''Check if current repo has any pending changes.
+        '''
+        rc,out = self.exec(['git', 'status', '--porcelain'])
+        merging = os.path.exists(os.path.join('.git', 'MERGE_HEAD'))
+        return out or merging
+
+    def exec_repository(self, repo):
+        '''Run the requested git commands on a git repository.
+        '''
+        os.chdir(repo)
+
+        isChanged = self.is_changed()
+
+        if not isChanged and self.opts.quiet:
+                return 0
+
+        print('REPO: {}'.format(repo))
+
+        if not isChanged and self.opts.changed:
+            print('\tNot Changed')
+            return 0
+
+        rc,out = self.exec(['git'] + self.git_args)
+
+        if rc != 0:
+            self.log.error('{}: git cmd return code: {}'.format(repo, rc))
+
+        for line in out.split('\n'):
+            print('\t{}'.format(line))
+
+        return rc
+
+    def find_file(self, fn):
+        '''Find given file.
+
+        Walks up the path looking for filename (fn).
+
+        Returns a tuple of the path to the directory containing the file and the
+        name of the file if the file was found.
+
+        If the file was not found, returns (None, None).
+        '''
+        cwd = os.getcwd()
+        while True:
+           self.log.debug('CWD [%s]: %s' % (fn, cwd))
+           if os.path.exists(os.path.join(cwd, fn)):
+               return (cwd, fn)
+
+           if cwd == os.path.sep:
+               return (None, None)
+
+           cwd = os.path.split(cwd)[0]
+
+    def get_repos_from_manifest(self, topdir, manifest):
+        '''Get list of repos from a Google Repo Manifest file.
+        '''
+        repos = []
+        cwd = os.getcwd()
+        os.chdir(topdir)
+
+        tree = ET.parse(manifest)
+        root = tree.getroot()
+
+        for repo in root.iter('project'):
+            path = repo.attrib.get('path', None)
+            if not path:
+                continue
+
+            if os.path.isdir(path):
+                if self.opts.excludes and path in self.opts.excludes:
+                    continue
+
+                if os.path.exists(os.path.join(path, '.git')):
+                    repos.append(path)
+
+        os.chdir(cwd)
+        return repos
+
+    def get_repos_from_config(self, topdir, config):
+        '''Get list of repos from a .gitmulti config file.
+
+        The file is simply a list of pathes (relative to topdir) of git
+        repositories (one repo per line).
+
+        Comments begin with a '#' character. Blank lines are ignored.
+        '''
+        repos = []
+        cwd = os.getcwd()
+        os.chdir(topdir)
+
+        with open(config) as cfg:
+            for line in cfg:
+                path = line.split('#')[0].strip()
+
+                if path and os.path.isdir(path):
+                    if self.opts.excludes and path in self.opts.excludes:
+                        continue
+
+                    if os.path.exists(os.path.join(path, '.git')):
+                        repos.append(path)
+
+        os.chdir(cwd)
+        return repos
+
+    def get_repos_from_search(self, topdir):
+        '''Get list of repos by searching for .git dirrectories.
+
+        If no repos are found in the current topdir, the parent of topdir will
+        be searched recursively until either git repos are found or the root
+        level is reached.
+        '''
+        repos = []
+
+        self.log.debug('search -> {}'.format(topdir))
+
+        for fn in os.listdir(topdir):
+            if os.path.isdir(os.path.join(topdir, fn)):
+                if self.opts.excludes and fn in self.opts.excludes:
+                    continue
+
+                if os.path.exists(os.path.join(topdir, fn, '.git')):
+                    repos.append(fn)
+
+        if not repos:
+            if topdir == os.path.sep:
+                # No repos found and we are at root dir, can't go any further.
+                return (None, None)
+            else:
+                # Try parent directory.
+                return self.get_repos_from_search(os.path.split(topdir)[0])
+
+        return topdir, repos
+
+    def find_repositories(self):
+        '''Find repositories in the current directory or any parent directory.
+
+        Repositories are discovered by the following methods (in order of
+        preference:
+
+        * Search for Google Repo `manifest.xml` file.
+        * Search for `.gitmulti` config file.
+        * Search for directories with a `.git` subdir.
+        '''
+        topdir, cfg = self.find_file(os.path.join('.repo', 'manifest.xml'))
+        if topdir:
+            self.log.info('Using google repo manifest file: {}'
+                          .format(os.path.join(topdir, cfg)))
+
+            return topdir, self.get_repos_from_manifest(topdir, cfg)
+
+        topdir, cfg = self.find_file('.gitmulti')
+        if topdir:
+            self.log.info('Using git-multi config file: {}'
+                          .format(os.path.join(topdir, cfg)))
+
+            return topdir, self.get_repos_from_config(topdir, cfg)
+
+        return self.get_repos_from_search(os.getcwd())
+
+
+if __name__ == '__main__':
+    logger = logging.getLogger('GIT_MULTI')
+    fmtr = logging.Formatter('%(name)s: %(levelname)s: %(message)s')
+    hndr = logging.StreamHandler()
+    hndr.setFormatter(fmtr)
+    logger.addHandler(hndr)
+
+    GitMulti(sys.argv[1:], logger)
