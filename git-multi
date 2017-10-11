@@ -61,7 +61,7 @@ class GitMulti:
             if not self.opts.repos or repo in self.opts.repos:
                 os.chdir(topdir)
                 rc = self.exec_repository(repo)
-                if rc != 0:
+                if rc != 0 and self.opts.exit_on_error:
                     break
 
     def parse_cmd_line(self, argv):
@@ -109,6 +109,9 @@ class GitMulti:
                             metavar='REPO',
                             default=[],
                             help='Add repo to list of repositories to exclude.')
+        parser.add_argument('--exit-on-error',
+                            action='store_true',
+                            help='Exit immediately if git command fails')
         parser.add_argument('-r', '--repo',
                             action='append',
                             dest='repos',
