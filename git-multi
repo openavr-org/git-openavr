@@ -187,7 +187,7 @@ class GitMulti:
         rc,out = self.exec(['git'] + self.git_args)
 
         if rc != 0:
-            self.log.error('{}: git cmd return code: {}'.format(repo, rc))
+            self.log.debug('{}: git cmd return code: {}'.format(repo, rc))
 
         for line in out.split('\n'):
             print('\t{}'.format(line))
