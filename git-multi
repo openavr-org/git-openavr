@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright 2016 Theodore A. Roth <troth@openavr.org>
+# Copyright 2017 Theodore A. Roth <troth@openavr.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -124,10 +124,12 @@ class GitMulti:
                             action='store_true',
                             help='If repository unchanged, do not output anything.')
 
+        parser.add_argument('gargs', nargs='*')
+
         opts,args = parser.parse_known_args(multi_args)
 
         # Preserve order of arguments going to git by putting args before git_args
-        git_args = args + git_args
+        git_args = opts.gargs + args + git_args
 
         # Process repositories specified via '-r foo:bar'
         repos = []
