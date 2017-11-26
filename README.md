@@ -20,3 +20,17 @@ Installation
 ------------
 
 Clone this repository and put the path to it in your `PATH` environment.
+
+Alternatively, you can simply create a symlink to the `git-multi` file in your
+`$HOME/bin` directory (assuming `$HOME/bin` is already in your `PATH`).
+
+Usage
+-----
+
+Get help from `git-multi`:
+
+    $ git multi -h
+
+You can also use `man` to view the docs from the cloned directory:
+
+    $ man ./git-multi.1
